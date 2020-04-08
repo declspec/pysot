@@ -44,7 +44,7 @@ class SiamRPNLTTracker(SiamRPNTracker):
 
         x_crop = self.get_subwindow(img, self.center_pos, instance_size,
                                     round(s_x), self.channel_average)
-        outputs = self.model.track(x_crop)
+        outputs = self.model.track(self.z_template, x_crop)
         score = self._convert_score(outputs['cls'])
         pred_bbox = self._convert_bbox(outputs['loc'], anchors)
 

@@ -40,32 +40,35 @@ class ModelBuilder(nn.Module):
             if cfg.REFINE.REFINE:
                 self.refine_head = get_refine_head(cfg.REFINE.TYPE)
 
-    def template(self, z):
-        zf = self.backbone(z)
-        if cfg.MASK.MASK:
-            zf = zf[-1]
-        if cfg.ADJUST.ADJUST:
-            zf = self.neck(zf)
-        self.zf = zf
+    def template(self, t):
+        tf = self.backbone(t)
+        tfr = None
 
-    def track(self, x):
-        xf = self.backbone(x)
         if cfg.MASK.MASK:
-            self.xf = xf[:-1]
-            xf = xf[-1]
+            tfr = tf[:-1]
+            tf = tf[-1]
         if cfg.ADJUST.ADJUST:
-            xf = self.neck(xf)
-        cls, loc = self.rpn_head(self.zf, xf)
+            tf = self.neck(tf)
+
+        return (tf, tfr)
+
+    def track(self, template, x):
+        xt = self.template(x)
+        cls, loc = self.rpn_head(template[0], xt[0])
+
         if cfg.MASK.MASK:
-            mask, self.mask_corr_feature = self.mask_head(self.zf, xf)
+            mask, mask_corr_feature = self.mask_head(template[0], xt[0])
+
         return {
                 'cls': cls,
                 'loc': loc,
-                'mask': mask if cfg.MASK.MASK else None
+                'template': xt,
+                'mask': mask if cfg.MASK.MASK else None,
+                'mask_corr_feature': mask_corr_feature if cfg.MASK.MASK else None
                }
 
-    def mask_refine(self, pos):
-        return self.refine_head(self.xf, self.mask_corr_feature, pos)
+    def mask_refine(self, template, mask_corr_feature, pos):
+        return self.refine_head(template[1], mask_corr_feature, pos)
 
     def log_softmax(self, cls):
         b, a2, h, w = cls.size()
@@ -84,15 +87,8 @@ class ModelBuilder(nn.Module):
         label_loc_weight = data['label_loc_weight'].cuda()
 
         # get feature
-        zf = self.backbone(template)
-        xf = self.backbone(search)
-        if cfg.MASK.MASK:
-            zf = zf[-1]
-            self.xf_refine = xf[:-1]
-            xf = xf[-1]
-        if cfg.ADJUST.ADJUST:
-            zf = self.neck(zf)
-            xf = self.neck(xf)
+        zf, _ = self.template(template)
+        xf, _ = self.template(search)
         cls, loc = self.rpn_head(zf, xf)
 
         # get loss

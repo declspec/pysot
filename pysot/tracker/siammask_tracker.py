@@ -83,7 +83,7 @@ class SiamMaskTracker(SiamRPNTracker):
                     s_x,
                     s_x]
 
-        outputs = self.model.track(x_crop)
+        outputs = self.model.track(self.z_template, x_crop)
         score = self._convert_score(outputs['cls'])
         pred_bbox = self._convert_bbox(outputs['loc'], self.anchors)
 
@@ -136,7 +136,7 @@ class SiamMaskTracker(SiamRPNTracker):
         pos = np.unravel_index(best_idx, (5, self.score_size, self.score_size))
         delta_x, delta_y = pos[2], pos[1]
 
-        mask = self.model.mask_refine((delta_y, delta_x)).sigmoid().squeeze()
+        mask = self.model.mask_refine(outputs['template'], outputs['mask_corr_feature'], (delta_y, delta_x)).sigmoid().squeeze()
         out_size = cfg.TRACK.MASK_OUTPUT_SIZE
         mask = mask.view(out_size, out_size).cpu().data.numpy()
 
