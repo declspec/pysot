@@ -25,6 +25,19 @@ def main(args):
     if not os.path.exists(output):
         os.makedirs(output)
 
+    # load config
+    cfg.merge_from_file(args.config)
+    cfg.CUDA = torch.cuda.is_available() and cfg.CUDA
+    device = torch.device('cuda' if cfg.CUDA else 'cpu')
+
+    def get_model():
+        s_time = time.perf_counter()
+        model = ModelBuilder()
+        model.load_state_dict(torch.load(args.snapshot, map_location=lambda storage, loc: storage.cpu()))
+        model.eval().to(device)
+        print('allocated model %.2f seconds' % (time.perf_counter() - s_time))
+        return model
+
     for meta in metadata:
         match = re.search(r'^(?P<video>.*?)(?P<frame>\d+)\.\w+$', meta['filename'])
 
@@ -44,8 +57,9 @@ def main(args):
         start_time = time.perf_counter()
         print('started %s'%name)
 
-        # convert shapes to box tuples
+        # convert shapes to box tuples and filter out any with an area of < 100
         boxes = [ shape_to_box(r['shape_attributes']) for r in meta['regions'] ]
+        boxes = [ box for box in boxes if (box[2] * box[3]) >= 200 ]
 
         # initialise the reader
         video = cv2.VideoCapture(vfile)
@@ -57,19 +71,8 @@ def main(args):
         fps = video.get(cv2.CAP_PROP_FPS)
         writer = cv2.VideoWriter(os.path.join(output, name + '.avi'), cv2.VideoWriter_fourcc(*'XVID'), int(fps * args.speed), (width, height))
 
-        # load config
-        cfg.merge_from_file(args.config)
-        cfg.CUDA = torch.cuda.is_available() and cfg.CUDA
-        device = torch.device('cuda' if cfg.CUDA else 'cpu')
-
-        # create model once
-        model = ModelBuilder()
-
-        # load model
-        model.load_state_dict(torch.load(args.snapshot, map_location=lambda storage, loc: storage.cpu()))
-        model.eval().to(device)
-
-        results = track(video, writer, model, boxes, args.frames)
+        # run the tracker
+        results = track(video, writer, get_model, boxes, args.frames)
 
         with open(os.path.join(output, name+'.json'), 'w') as f:
             json.dump(results, f)

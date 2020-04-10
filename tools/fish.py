@@ -32,16 +32,16 @@ def main(args):
     totalFrames = 200
     results = [ [ None ] * len(regions) for i in range(totalFrames) ]
 
+    # create model
+    model = ModelBuilder()
+
+    # load model
+    model.load_state_dict(torch.load(args.snapshot,
+        map_location=lambda storage, loc: storage.cpu()))
+    model.eval().to(device)
+
     # brute force track all the regions
     for regionIndex, region in enumerate(regions):
-        # create model
-        model = ModelBuilder()
-
-        # load model
-        model.load_state_dict(torch.load(args.snapshot,
-            map_location=lambda storage, loc: storage.cpu()))
-        model.eval().to(device)
-
         # build and initialise tracker
         video.set(cv2.CAP_PROP_POS_FRAMES, startFrame)
         _, frame = video.read()
