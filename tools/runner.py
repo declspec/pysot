@@ -9,9 +9,59 @@ from track import track
 from argparse import ArgumentParser
 from pysot.core.config import cfg
 from pysot.models.model_builder import ModelBuilder
+#from .tracker import FishTracker
 
 def shape_to_box(shape):
     return (int(shape['x']), int(shape['y']), int(shape['width']), int(shape['height']))
+
+def extract_regions(metadata, min_area):
+    labels = []
+    boxes = []
+
+    for region in metadata['regions']:
+        sattr = region['shape_attributes']
+
+        if (sattr['width'] * sattr['height']) >= min_area:
+            labels.append(region['region_attributes']['label'])
+            boxes.append(shape_to_box(sattr))
+
+    return labels, boxes
+
+    
+#def create_trackers(model, regions, min_area):
+#    trackers = []
+#
+#    for region in regions:
+#        sattr = region['shape_attributes']
+#        box = map(int, (sattr['x'], sattr['y'], sattr['width'], sattr['height']))
+#        label = region['region_attributes']['label']
+#
+#        if (box[2] * box[3]) >= min_area:
+#            trackers.append(FishTracker(label, box, build_tracker(model))), label, box))
+#
+#    return trackers
+
+def draw_results(labels, results, reader, writer):
+    frame_index = 0
+
+    while True:
+        _, frame = reader.read()
+        total_drawn = 0
+
+        for index, result in enumerate(results):
+            label = labels[index]
+
+            if len(result) > frame_index:
+                bbox, score = result[frame_index]
+                cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), (0, 255, 0), 3)
+                cv2.putText(frame, '%s (%.5f)' % (label, score), (bbox[0], bbox[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                total_drawn += 1
+
+        writer.write(frame)
+        frame_index += 1
+
+        if total_drawn == 0:
+            break
 
 def main(args):
     metadata = None
@@ -25,17 +75,17 @@ def main(args):
     if not os.path.exists(output):
         os.makedirs(output)
 
-    # load config
+    # load config and create model
     cfg.merge_from_file(args.config)
     cfg.CUDA = torch.cuda.is_available() and cfg.CUDA
     device = torch.device('cuda' if cfg.CUDA else 'cpu')
 
+    model = ModelBuilder()
+    model.load_state_dict(torch.load(args.snapshot, map_location=lambda storage, loc: storage.cpu()))
+    model.eval().to(device)
+
     def get_model():
-        s_time = time.perf_counter()
-        model = ModelBuilder()
-        model.load_state_dict(torch.load(args.snapshot, map_location=lambda storage, loc: storage.cpu()))
-        model.eval().to(device)
-        print('allocated model %.2f seconds' % (time.perf_counter() - s_time))
+        # return a shared model
         return model
 
     for meta in metadata:
@@ -57,9 +107,7 @@ def main(args):
         start_time = time.perf_counter()
         print('started %s'%name)
 
-        # convert shapes to box tuples and filter out any with an area of < 100
-        boxes = [ shape_to_box(r['shape_attributes']) for r in meta['regions'] ]
-        boxes = [ box for box in boxes if (box[2] * box[3]) >= 200 ]
+        labels, boxes = extract_regions(meta, 300)
 
         # initialise the reader
         video = cv2.VideoCapture(vfile)
@@ -69,15 +117,20 @@ def main(args):
         width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = video.get(cv2.CAP_PROP_FPS)
-        writer = cv2.VideoWriter(os.path.join(output, name + '.avi'), cv2.VideoWriter_fourcc(*'XVID'), int(fps * args.speed), (width, height))
 
         # run the tracker
-        results = track(video, writer, get_model, boxes, args.frames)
+        results = track(video, get_model, boxes, args.frames)
+        print('drawing results')
 
         with open(os.path.join(output, name+'.json'), 'w') as f:
             json.dump(results, f)
 
+        # draw the results to a new file
+        video.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        writer = cv2.VideoWriter(os.path.join(output, name + '.avi'), cv2.VideoWriter_fourcc(*'XVID'), int(fps * args.speed), (width, height))
+        draw_results(labels, results, video, writer)
         writer.release()
+
         video.release()
 
         print('completed %s in %0.2f seconds'%(name, time.perf_counter() - start_time))

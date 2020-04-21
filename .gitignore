@@ -105,3 +105,11 @@ venv.bak/
 
 testing_dataset/*
 experiments
+
+# videos / images
+*.avi
+*.mp4
+*.png
+
+# vscode
+.vscode/

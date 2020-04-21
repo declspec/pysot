@@ -1,7 +1,52 @@
 from cv2 import cv2
 from pysot.tracker.tracker_builder import build_tracker
 
-def track(reader, writer, get_model, boxes, total_frames):
+def is_valid_result(current, previous):
+    return current[1] > 0.2
+
+def track(reader, get_model, boxes, total_frames):
+    trackers = [ None ] * len(boxes)
+    results = [ None ] * len(trackers)
+
+    # read the first frame to initialise the trackers
+    _, frame = reader.read()
+    frame_index = 0
+
+    # initialise the trackers and give the boxes an initial score of 1.0
+    for tracker_index in range(len(trackers)):
+        tracker = trackers[tracker_index] = build_tracker(get_model())
+        tracker.init(frame, boxes[tracker_index])
+        results[tracker_index] = [[ boxes[tracker_index], 1.0 ]]
+
+    # run until no more trackers exist or we run out of frames
+    for _ in range(total_frames):
+        res, frame = reader.read()
+        total_trackers = 0
+
+        if not res:
+            break
+
+        for tracker_index in range(len(trackers)):
+            tracker = trackers[tracker_index]
+            tracker_results = results[tracker_index]
+
+            if tracker is None:
+                continue
+
+            outputs = tracker.track(frame)
+            result = [ list(map(int, outputs['bbox'])), float(outputs['best_score']) ]
+
+            if not is_valid_result(result, tracker_results):
+                trackers[tracker_index] = None
+            else:
+                tracker_results.append(result)
+                total_trackers += 1
+
+        if total_trackers == 0:
+            break
+
+    return results
+
     # In the current implementation, each Tracker instance re-intialises 
     # the model with its own template, meaning the Trackers cannot currently
     # be run in parallel and must each be run against all the frames before moving
